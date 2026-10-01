@@ -1,0 +1,80 @@
+name: Build and Release Sona Plugin
+
+on:
+  push:
+    branches:
+      - main
+      - fix/*
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Prepare plugin folder
+        shell: bash
+        run: |
+          mkdir -p sona-plugin
+          if [ -d "dist" ]; then
+            if [ -f "dist/index.js" ]; then cp dist/index.js sona-plugin/index.js; fi
+            if [ -f "dist/index.css" ]; then cp dist/index.css sona-plugin/index.css; fi
+          else
+            if [ -f "index.js" ]; then cp index.js sona-plugin/index.js; fi
+            if [ -f "index.css" ]; then cp index.css sona-plugin/index.css; fi
+          fi
+
+          if [ -f "pengu.yml" ]; then cp pengu.yml sona-plugin/pengu.yml; fi
+          if [ -f "pengu.d.ts" ]; then cp pengu.d.ts sona-plugin/pengu.d.ts; fi
+          if [ -d "assets" ]; then cp -r assets sona-plugin/assets; fi
+
+          ls -la sona-plugin
+
+      - name: Create zip archive
+        shell: bash
+        run: |
+          cd sona-plugin
+          zip -r ../sona-plugin.zip .
+          cd ..
+          ls -lh sona-plugin.zip
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./sona-plugin.zip
+          name: Sona ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sona-plugin-${{ github.run_number }}
+          path: sona-plugin/
+          retention-days: 30

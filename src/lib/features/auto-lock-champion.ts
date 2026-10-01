@@ -9,6 +9,26 @@ import { translate } from '@/i18n'
 // ==================== 秒抢英雄 ====================
 
 /**
+ * 规范化游戏模式字符串：统一 urf/ARURF/all_random_urf 等变体
+ */
+function normalizeModeKey(value: string | null | undefined): string {
+  return (value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_\-\s]+/g, '')
+}
+
+/**
+ * 判断是否为 URF 类模式（包括 URF、ARURF、ALLRANDOMURF 等变体）
+ */
+function isUrfLikeMode(gameMode: string | null | undefined): boolean {
+  const normalized = normalizeModeKey(gameMode)
+  return normalized === 'urf'
+    || normalized === 'arurf'
+    || normalized === 'allrandomurf'
+}
+
+/**
  * 秒抢/预选成功后发送 celebration 消息到聊天框
  */
 async function notifyAutoLockSuccess(championId: number, isLock: boolean) {
@@ -143,6 +163,8 @@ async function resolveTargetChampionId(session: ChampSelectSession, actionChampi
 /**
  * 监听英雄选择的 actions 变化，当轮到自己的 pick action 处于 isInProgress 时秒锁
  * 仅在有 pick 动作的模式生效（排位/匹配等），大乱斗等无 pick 的模式不受影响
+ * 
+ * 修复：URF 类模式可能延迟给出本地 pick action，需要继续轮询而不是提前判定无需选人
  */
 async function tryAutoLockChampion() {
   if (getConfiguredChampionIds().length === 0) {
@@ -152,11 +174,13 @@ async function tryAutoLockChampion() {
 
   let lastPreselectedChampionId = 0
   let autofillCheckCompleted = false
+  let gameMode = ''
 
   // 排位赛 BP 可能长达 5 分钟，300 次 × 1s 轮询足够覆盖
   for (let attempt = 0; attempt < 300; attempt++) {
     try {
       const session = await lcu.getChampSelectSession()
+      gameMode = gameMode || session.gameMode || '' // 记录首次的 gameMode
 
       // 排位补位时，实际分路不在玩家本来的选择内，继续执行预选或秒锁容易
       // 锁下不适合该位置的英雄。LCU 会在本地玩家条目上直接标记 isAutofilled。
@@ -183,6 +207,13 @@ async function tryAutoLockChampion() {
 
       const allActions = session.actions.flat(2)
       if (allActions.length === 0) {
+        // URF 类模式可能延迟给出选人 action，不能直接判定为"无需选人"，继续轮询
+        if (isUrfLikeMode(gameMode)) {
+          logger.debug('[AutoLock] URF 类模式，选人 action 暂未就绪，继续轮询...')
+          await sleep(1000)
+          continue
+        }
+        // 非 URF 模式下 action 仍为空，则判定无需选人
         await sleep(1000)
         continue
       }
@@ -193,6 +224,12 @@ async function tryAutoLockChampion() {
 
       if (!myPickAction) {
         if (allActions.every((a) => a.type !== 'pick' || a.actorCellId !== session.localPlayerCellId)) {
+          // URF 类模式可能延迟给出本地 pick action，不能直接判定为"当前模式无需选人"，继续轮询
+          if (isUrfLikeMode(gameMode)) {
+            logger.debug('[AutoLock] URF 类模式，本地 pick action 暂未就绪，继续轮询...')
+            await sleep(1000)
+            continue
+          }
           logger.info('[AutoLock] 当前模式无需选人（大乱斗等），跳过')
           return
         }

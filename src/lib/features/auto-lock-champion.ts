@@ -180,7 +180,7 @@ async function tryAutoLockChampion() {
   for (let attempt = 0; attempt < 300; attempt++) {
     try {
       const session = await lcu.getChampSelectSession()
-      gameMode = gameMode || session.gameMode || '' // 记录首次的 gameMode
+      gameMode = gameMode || session.gameData.queue.gameMode || '' // 记录首次的 gameMode
 
       // 排位补位时，实际分路不在玩家本来的选择内，继续执行预选或秒锁容易
       // 锁下不适合该位置的英雄。LCU 会在本地玩家条目上直接标记 isAutofilled。
